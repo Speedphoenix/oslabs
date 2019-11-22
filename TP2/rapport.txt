@@ -1,0 +1,159 @@
+1 - Shared Memory)
+1)
+We can see that while the child process changed the value of i, that change is not seen in the parent process.
+Changes to *ptr however (that is in shared memory) are also visible from the parent process even though the child changed it
+
+
+2)
+
+// the key of the new memory segment. Can be used to later get the segment id again
+#define KEY 4567
+
+// The permissions of the new memory segment.
+// both the owner and group have read and write access
+#define PERMS 0660
+
+int my_system(char *cmd);
+
+int main(int argc, char **argv)
+{
+	int id;
+	int i;
+	int *ptr;
+
+	// show the shared memory segments this process has access to
+	my_system("ipcs -m");
+
+	// create a new shared memory segment, large enough to accomodate an integer
+	id = shmget(KEY, sizeof(int), IPC_CREAT | PERMS);
+
+	// show the shared memory segments this process has access to.
+	// there should be one more, and the id of the new one should be `id`
+	my_system("ipcs -m");
+
+	// make the pointer ptr point to the start of the new memory segment
+	ptr = (int *)shmat(id, NULL, 0);
+
+	// initialize the values.
+	// this comes before fork(), so child processes will initially have these values
+	*ptr = 54;
+	i = 54;
+
+	// fork the process
+	if (fork() == 0)
+	{
+		// this happens if the process is the child
+
+		// modify both values
+		// this will be visible from the other process as it is in a shared memory segment
+		(*ptr)++;
+
+		// this will only be visible from the child process
+		i++;
+
+		//print the values
+		printf("Value of *ptr = %d\nValue of i = %d\n", *ptr, i);
+
+		//quit without error
+		exit(0);
+	}
+	else
+	{
+		// this happens if the process is the parent
+
+		// wait until the child process terminates
+		wait(NULL);
+
+		// print the values that the child process might have changed
+		// i will still be 54 because it was not changed by the parent
+		//	and is not in a shared memory
+		// *ptr will have become 55 because the child process changed it and is in shared memory
+		printf("Value of *ptr = %d\nValue of i = %d\n", *ptr, i);
+
+		// clear (deallocate) the shared memory segment
+		shmctl(id, IPC_RMID, NULL);
+	}
+	return (0);
+}
+
+3)
+The functions doop and launchop were made for potential reusability in the next part of the lab
+
+// ((a+b)-(c+d))
+
+void doop(int *repptr, int a, int b, char op)
+{
+	switch (op)
+	{
+		case '+':
+			*repptr = a + b;
+			break;
+
+		case '-':
+			*repptr = a - b;
+			break;
+
+		case '*':
+			*repptr = a * b;
+			break;
+
+		case '%':
+			*repptr = a % b;
+			break;
+
+		default:
+			break;
+	}
+}
+
+// launches to do the operation asynchronously, the pointer that
+// will eventually contain the result is *rep
+// this returns the id of the memory segment so it can e freed later
+int launchop(int **rep, int a, int b, char op)
+{
+	int id;
+
+	id = shmget(IPC_PRIVATE, sizeof(int), IPC_CREAT | PERMS);
+
+	*rep = (int *)shmat(id, NULL, 0);
+
+	if (fork() == 0)
+	{
+		// do the operation, put the result in *rep, then quit
+		doop(*rep, a, b, op);
+		exit(0);
+	}
+	return id;
+}
+
+int main(int argc, char **argv)
+{
+	int a, b, c, d;
+	int rep;
+	int *repptr;
+	int id;
+
+	a = 4;
+	b = 8;
+	c = 14;
+	d = 2;
+
+	// launch on the small operations to do
+	id = launchop(&repptr, c, d, '+');
+
+	// in the meantime do the other
+	rep = a + b;
+
+	// wait for that operation from before to finish
+	wait(NULL);
+	//now the result from before is *repptr
+
+	rep -= *repptr;
+
+	//we don't need the memory segment anymore. We can clear it now
+	shmctl(id, IPC_RMID, NULL);
+
+	printf("The result is %d\n", rep);
+
+	return (0);
+}
